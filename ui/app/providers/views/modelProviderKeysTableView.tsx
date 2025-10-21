@@ -1,13 +1,5 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ModelProvider, ModelProviderKey } from "@/lib/types/config";
-import { EllipsisIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
-import { useState } from "react";
-import AddNewKeyDialog from "../dialogs/addNewKeyDialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdownMenu";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -18,10 +10,17 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/ui/alertDialog";
+import { Button } from "@/components/ui/button";
+import { CardHeader, CardTitle } from "@/components/ui/card";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdownMenu";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getErrorMessage, useUpdateProviderMutation } from "@/lib/store";
-import { toast } from "sonner";
+import { ModelProvider } from "@/lib/types/config";
 import { cn } from "@/lib/utils";
-import { KnownProvidersNames } from "@/lib/constants/logs";
+import { EllipsisIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import AddNewKeySheet from "../dialogs/addNewKeySheet";
 
 interface Props {
 	className?: string;
@@ -47,7 +46,9 @@ export default function ModelProviderKeysTableView({ provider, className }: Prop
 							<AlertDialogDescription>Are you sure you want to delete this key. This action cannot be undone.</AlertDialogDescription>
 						</AlertDialogHeader>
 						<AlertDialogFooter className="pt-4">
-							<AlertDialogCancel disabled={isUpdatingProvider}>Cancel</AlertDialogCancel>
+							<AlertDialogCancel disabled={isUpdatingProvider} onClick={() => setShowDeleteKeyDialog(undefined)}>
+								Cancel
+							</AlertDialogCancel>
 							<AlertDialogAction
 								disabled={isUpdatingProvider}
 								onClick={() => {
@@ -74,7 +75,7 @@ export default function ModelProviderKeysTableView({ provider, className }: Prop
 				</AlertDialog>
 			)}
 			{showAddNewKeyDialog && (
-				<AddNewKeyDialog
+				<AddNewKeySheet
 					show={showAddNewKeyDialog.show}
 					onCancel={() => setShowAddNewKeyDialog(undefined)}
 					provider={provider}

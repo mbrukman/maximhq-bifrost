@@ -41,6 +41,7 @@ type CreatePluginRequest struct {
 	Name    string         `json:"name"`
 	Enabled bool           `json:"enabled"`
 	Config  map[string]any `json:"config"`
+	Path    *string        `json:"path"`
 }
 
 // UpdatePluginRequest is the request body for updating a plugin
