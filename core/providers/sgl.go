@@ -68,6 +68,11 @@ func (provider *SGLProvider) GetProviderKey() schemas.ModelProvider {
 	return schemas.SGL
 }
 
+// ListModels performs a list models request to SGL's API.
+func (provider *SGLProvider) ListModels(ctx context.Context, key schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	return nil, newUnsupportedOperationError("list models", "sgl")
+}
+
 // TextCompletion is not supported by the SGL provider.
 func (provider *SGLProvider) TextCompletion(ctx context.Context, key schemas.Key, request *schemas.BifrostTextCompletionRequest) (*schemas.BifrostTextCompletionResponse, *schemas.BifrostError) {
 	return handleOpenAITextCompletionRequest(
