@@ -284,6 +284,66 @@
         }
       }
     },
+    "/v1/models": {
+      "get": {
+        "summary": "List Models",
+        "description": "Lists all available models from a specific provider.",
+        "operationId": "listModels",
+        "tags": [
+          "Bifrost Core",
+          "Models"
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "The provider to list models from. If not set, returns models from all configured providers in Bifrost.",
+            "schema": {
+              "$ref": "#/components/schemas/ModelProvider"
+            },
+            "example": "openai"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "description": "Number of models to return per page. If not specified, the provider's default page size will be used.",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 100
+          },
+          {
+            "name": "page_token",
+            "in": "query",
+            "required": false,
+            "description": "Token received from previous request to retrieve the next page of results. Omit this parameter to fetch the first page.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with list of models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListModelsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Get Health",
@@ -6489,6 +6549,266 @@
           },
           "stats": {
             "$ref": "#/components/schemas/SearchStats"
+          }
+        }
+      },
+      "ListModelsResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelInfo"
+            },
+            "description": "Array of model information objects"
+          },
+          "next_page_token": {
+            "type": "string",
+            "description": "Token to retrieve the next page of results. Omitted if there are no more pages.",
+            "example": "eyJwYWdlIjoxfQ=="
+          },
+          "extra_fields": {
+            "$ref": "#/components/schemas/BifrostResponseExtraFields"
+          }
+        }
+      },
+      "ModelInfo": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique model identifier",
+            "example": "gpt-4o"
+          },
+          "canonical_slug": {
+            "type": "string",
+            "description": "Canonical slug for the model",
+            "example": "openai/gpt-4o"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable model name",
+            "example": "GPT-4 Optimized"
+          },
+          "created": {
+            "type": "integer",
+            "description": "Unix timestamp of model creation",
+            "example": 1677652288
+          },
+          "context_length": {
+            "type": "integer",
+            "description": "Maximum context length in tokens",
+            "example": 128000
+          },
+          "architecture": {
+            "$ref": "#/components/schemas/ModelArchitecture",
+            "description": "Object describing the model's technical capabilities"
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/ModelPricing",
+            "description": "Lowest price structure for using this model (all values in USD per token/request/unit)"
+          },
+          "top_provider": {
+            "$ref": "#/components/schemas/ModelTopProvider",
+            "description": "Configuration details for the primary provider"
+          },
+          "per_request_limits": {
+            "description": "Rate limiting information (null if no limits)",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelPerRequestLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supported_parameters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of supported parameter names",
+            "example": ["temperature", "top_p", "max_tokens"]
+          },
+          "default_parameters": {
+            "$ref": "#/components/schemas/ModelDefaultParameters"
+          },
+          "hugging_face_id": {
+            "type": "string",
+            "description": "Hugging Face model identifier",
+            "example": "openai/gpt-4o"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the model and its capabilities",
+            "example": "A large language model for text generation"
+          },
+          "owned_by": {
+            "type": "string",
+            "description": "Organization that owns the model",
+            "example": "openai"
+          },
+          "supported_methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of supported API methods",
+            "example": ["chat.completions", "completions"]
+          }
+        }
+      },
+      "ModelArchitecture": {
+        "type": "object",
+        "properties": {
+          "tokenizer": {
+            "type": "string",
+            "description": "Tokenization method used by the model",
+            "example": "cl100k_base"
+          },
+          "instruct_type": {
+            "description": "Instruction format type (null if not applicable)",
+            "oneOf": [
+              {
+                "type": "string",
+                "example": "chat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input_modalities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["file", "image", "text", "audio", "video"]
+            },
+            "description": "Supported input types for the model",
+            "example": ["text", "image"]
+          },
+          "output_modalities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["text", "image", "audio", "video"]
+            },
+            "description": "Supported output types for the model",
+            "example": ["text"]
+          },
+          "modality": {
+            "type": "string",
+            "description": "Primary model modality",
+            "example": "text->text"
+          }
+        }
+      },
+      "ModelPricing": {
+        "type": "object",
+        "description": "All pricing values are in USD per token/request/unit. A value of '0' indicates the feature is free.",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Cost per input token in USD",
+            "example": "0.00001"
+          },
+          "completion": {
+            "type": "string",
+            "description": "Cost per output token in USD",
+            "example": "0.00003"
+          },
+          "request": {
+            "type": "string",
+            "description": "Fixed cost per API request in USD",
+            "example": "0"
+          },
+          "image": {
+            "type": "string",
+            "description": "Cost per image input in USD",
+            "example": "0"
+          },
+          "web_search": {
+            "type": "string",
+            "description": "Cost per web search operation in USD",
+            "example": "0"
+          },
+          "internal_reasoning": {
+            "type": "string",
+            "description": "Cost for internal reasoning tokens in USD",
+            "example": "0"
+          },
+          "input_cache_read": {
+            "type": "string",
+            "description": "Cost per cached input token read in USD",
+            "example": "0"
+          },
+          "input_cache_write": {
+            "type": "string",
+            "description": "Cost per cached input token write in USD",
+            "example": "0"
+          }
+        }
+      },
+      "ModelTopProvider": {
+        "type": "object",
+        "description": "Configuration details for the primary provider",
+        "properties": {
+          "context_length": {
+            "type": "number",
+            "description": "Provider-specific context limit in tokens",
+            "example": 128000
+          },
+          "max_completion_tokens": {
+            "type": "number",
+            "description": "Maximum completion tokens",
+            "example": 4096
+          },
+          "is_moderated": {
+            "type": "boolean",
+            "description": "Whether content moderation is applied to the model output",
+            "example": false
+          }
+        }
+      },
+      "ModelPerRequestLimits": {
+        "type": "object",
+        "properties": {
+          "prompt_tokens": {
+            "type": "integer",
+            "description": "Maximum prompt tokens per request",
+            "example": 120000
+          },
+          "completion_tokens": {
+            "type": "integer",
+            "description": "Maximum completion tokens per request",
+            "example": 4096
+          }
+        }
+      },
+      "ModelDefaultParameters": {
+        "type": "object",
+        "properties": {
+          "temperature": {
+            "type": "number",
+            "description": "Default temperature",
+            "example": 1.0
+          },
+          "top_p": {
+            "type": "number",
+            "description": "Default top_p",
+            "example": 1.0
+          },
+          "frequency_penalty": {
+            "type": "number",
+            "description": "Default frequency penalty",
+            "example": 0.0
           }
         }
       }

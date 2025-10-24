@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -805,6 +806,91 @@ func (provider *GeminiProvider) TranscriptionStream(ctx context.Context, postHoo
 	}()
 
 	return responseChan, nil
+}
+
+// ListModels performs a list models request to Gemini's API.
+func (provider *GeminiProvider) ListModels(ctx context.Context, key schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	if err := checkOperationAllowed(schemas.Gemini, provider.customProviderConfig, schemas.ListModelsRequest); err != nil {
+		return nil, err
+	}
+
+	providerName := provider.GetProviderKey()
+
+	geminiResponse, rawResponse, latency, err := provider.handleGeminiListModelsRequest(ctx, key, request)
+	if err != nil {
+		return nil, err
+	}
+
+	response := geminiResponse.ToBifrostListModelsResponse(providerName)
+
+	response.ExtraFields.Provider = providerName
+	response.ExtraFields.RequestType = schemas.ListModelsRequest
+	response.ExtraFields.Latency = latency.Milliseconds()
+
+	if provider.sendBackRawResponse {
+		response.ExtraFields.RawResponse = rawResponse
+	}
+
+	return response, nil
+}
+
+func (provider *GeminiProvider) handleGeminiListModelsRequest(ctx context.Context, key schemas.Key, request *schemas.BifrostListModelsRequest) (*gemini.GeminiListModelsResponse, interface{}, time.Duration, *schemas.BifrostError) {
+	providerName := provider.GetProviderKey()
+
+	// Create request
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	// Set any extra headers from network config
+	setExtraHeaders(req, provider.networkConfig.ExtraHeaders, nil)
+
+	// Build URL with properly encoded query parameters
+	u, err := url.Parse(provider.networkConfig.BaseURL + "/models")
+	if err != nil {
+		return nil, nil, 0, newBifrostOperationError(schemas.ErrProviderRequest, err, providerName)
+	}
+	q := u.Query()
+	// Add limit parameter (default to 1000)
+	pageSize := request.PageSize
+	if pageSize <= 0 {
+		pageSize = 1000
+	}
+	q.Set("pageSize", strconv.Itoa(pageSize))
+	if request.PageToken != "" {
+		q.Set("pageToken", request.PageToken)
+	}
+
+	u.RawQuery = q.Encode()
+	req.SetRequestURI(u.String())
+	req.Header.SetMethod("GET")
+	req.Header.SetContentType("application/json")
+	req.Header.Set("x-goog-api-key", key.Value)
+
+	// Make request
+	latency, bifrostErr := makeRequestWithContext(ctx, provider.client, req, resp)
+	if bifrostErr != nil {
+		return nil, nil, latency, bifrostErr
+	}
+
+	// Handle error response
+	if resp.StatusCode() != fasthttp.StatusOK {
+		return nil, nil, latency, parseGeminiError(providerName, resp)
+	}
+
+	// Parse Gemini's response
+	var geminiResponse gemini.GeminiListModelsResponse
+	if err := sonic.Unmarshal(resp.Body(), &geminiResponse); err != nil {
+		return nil, nil, latency, newBifrostOperationError(schemas.ErrProviderResponseUnmarshal, err, providerName)
+	}
+
+	var rawResponse interface{}
+	if err := sonic.Unmarshal(resp.Body(), &rawResponse); err != nil {
+		return nil, nil, latency, newBifrostOperationError(schemas.ErrProviderResponseUnmarshal, err, providerName)
+	}
+
+	return &geminiResponse, rawResponse, latency, nil
 }
 
 // processGeminiStreamChunk processes a single chunk from Gemini streaming response

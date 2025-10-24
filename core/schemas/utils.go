@@ -1,12 +1,15 @@
 package schemas
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/bytedance/sonic"
 )
 
 // Ptr creates a pointer to any value.
@@ -544,4 +547,138 @@ func SafeExtractFromMap(m map[string]interface{}, key string) (interface{}, bool
 	}
 	value, exists := m[key]
 	return value, exists
+}
+
+// paginationCursor represents the internal cursor structure for pagination.
+type paginationCursor struct {
+	Offset int    `json:"o"`
+	LastID string `json:"l,omitempty"`
+}
+
+// encodePaginationCursor creates an opaque base64-encoded page token from cursor data.
+// Returns empty string if offset is 0 or negative.
+func encodePaginationCursor(offset int, lastID string) (string, error) {
+	if offset <= 0 {
+		return "", nil
+	}
+
+	cursor := paginationCursor{
+		Offset: offset,
+		LastID: lastID,
+	}
+
+	jsonData, err := sonic.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal pagination cursor: %w", err)
+	}
+
+	// Use URL-safe base64 encoding without padding for opaque token
+	encoded := base64.RawURLEncoding.EncodeToString(jsonData)
+	return encoded, nil
+}
+
+// decodePaginationCursor extracts cursor data from an opaque base64-encoded page token.
+// Returns cursor with 0 offset for empty or invalid tokens.
+func decodePaginationCursor(token string) paginationCursor {
+	if token == "" {
+		return paginationCursor{}
+	}
+
+	// Decode base64
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return paginationCursor{}
+	}
+
+	var cursor paginationCursor
+	if err := sonic.Unmarshal(decoded, &cursor); err != nil {
+		return paginationCursor{}
+	}
+
+	if cursor.Offset < 0 {
+		return paginationCursor{}
+	}
+
+	return cursor
+}
+
+// validatePaginationCursor validates that the cursor matches the expected position in the data.
+// Returns true if the cursor is valid, false otherwise.
+func validatePaginationCursor(cursor paginationCursor, data []Model) bool {
+	if cursor.LastID == "" {
+		return true
+	}
+
+	if cursor.Offset <= 0 || cursor.Offset > len(data) {
+		return false
+	}
+
+	prevIndex := cursor.Offset - 1
+	if prevIndex >= 0 && prevIndex < len(data) {
+		return data[prevIndex].ID == cursor.LastID
+	}
+
+	return true
+}
+
+// ApplyPagination applies offset-based pagination to a BifrostListModelsResponse.
+// Uses opaque tokens with LastID validation to ensure cursor integrity.
+// Returns the paginated response with properly set NextPageToken.
+func ApplyPagination(response *BifrostListModelsResponse, pageSize int, pageToken string) *BifrostListModelsResponse {
+	if response == nil {
+		return nil
+	}
+
+	totalItems := len(response.Data)
+
+	if pageSize <= 0 {
+		return response
+	}
+
+	cursor := decodePaginationCursor(pageToken)
+	offset := cursor.Offset
+
+	// Validate cursor integrity if LastID is present
+	if cursor.LastID != "" && !validatePaginationCursor(cursor, response.Data) {
+		// Invalid cursor: reset to beginning
+		offset = 0
+	}
+
+	if offset >= totalItems {
+		// Return empty page, no next token
+		return &BifrostListModelsResponse{
+			Data:          []Model{},
+			ExtraFields:   response.ExtraFields,
+			NextPageToken: "",
+		}
+	}
+
+	endIndex := offset + pageSize
+	if endIndex > totalItems {
+		endIndex = totalItems
+	}
+
+	paginatedData := response.Data[offset:endIndex]
+
+	paginatedResponse := &BifrostListModelsResponse{
+		Data:        paginatedData,
+		ExtraFields: response.ExtraFields,
+	}
+
+	if endIndex < totalItems {
+		// Get the last item ID for cursor validation
+		var lastID string
+		if len(paginatedData) > 0 {
+			lastID = paginatedData[len(paginatedData)-1].ID
+		}
+
+		nextToken, err := encodePaginationCursor(endIndex, lastID)
+		if err == nil {
+			paginatedResponse.NextPageToken = nextToken
+		}
+	} else {
+		paginatedResponse.NextPageToken = ""
+	}
+
+	return paginatedResponse
 }

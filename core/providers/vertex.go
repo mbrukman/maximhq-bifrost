@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -514,15 +516,22 @@ func (provider *VertexProvider) Embedding(ctx context.Context, key schemas.Key, 
 		return nil, newConfigurationError("embedding input texts are empty", schemas.Vertex)
 	}
 
+	// All Vertex AI embedding models use the same native Vertex embedding API
+	return provider.handleVertexEmbedding(ctx, request.Model, key, reqBody)
+}
+
+// handleVertexEmbedding handles embedding requests using Vertex's native embedding API
+// This is used for all Vertex AI embedding models as they all use the same response format
+func (provider *VertexProvider) handleVertexEmbedding(ctx context.Context, model string, key schemas.Key, vertexReq *vertex.VertexEmbeddingRequest) (*schemas.BifrostEmbeddingResponse, *schemas.BifrostError) {
 	// Use the typed request directly
-	jsonBody, err := sonic.Marshal(reqBody)
+	jsonBody, err := sonic.Marshal(vertexReq)
 	if err != nil {
 		return nil, newBifrostOperationError(schemas.ErrProviderJSONMarshaling, err, schemas.Vertex)
 	}
 
 	// Build the native Vertex embedding API endpoint
 	url := fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:predict",
-		key.VertexKeyConfig.Region, key.VertexKeyConfig.ProjectID, key.VertexKeyConfig.Region, request.Model)
+		key.VertexKeyConfig.Region, key.VertexKeyConfig.ProjectID, key.VertexKeyConfig.Region, model)
 
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
@@ -625,7 +634,7 @@ func (provider *VertexProvider) Embedding(ctx context.Context, key schemas.Key, 
 
 	// Set ExtraFields
 	bifrostResponse.ExtraFields.Provider = schemas.Vertex
-	bifrostResponse.ExtraFields.ModelRequested = request.Model
+	bifrostResponse.ExtraFields.ModelRequested = model
 	bifrostResponse.ExtraFields.RequestType = schemas.EmbeddingRequest
 	bifrostResponse.ExtraFields.Latency = latency.Milliseconds()
 
@@ -659,4 +668,178 @@ func (provider *VertexProvider) Transcription(ctx context.Context, key schemas.K
 // TranscriptionStream is not supported by the Vertex provider.
 func (provider *VertexProvider) TranscriptionStream(ctx context.Context, postHookRunner schemas.PostHookRunner, key schemas.Key, request *schemas.BifrostTranscriptionRequest) (chan *schemas.BifrostStream, *schemas.BifrostError) {
 	return nil, newUnsupportedOperationError("transcription stream", "vertex")
+}
+
+// ListModels performs a list models request to Vertex's API.
+func (provider *VertexProvider) ListModels(ctx context.Context, key schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	vertexResponse, rawResponse, latency, err := provider.handleVertexListModelsRequest(ctx, key, request)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create final response
+	response := vertexResponse.ToBifrostListModelsResponse()
+
+	// Set ExtraFields
+	response.ExtraFields.Provider = provider.GetProviderKey()
+	response.ExtraFields.RequestType = schemas.ListModelsRequest
+	response.ExtraFields.Latency = latency.Milliseconds()
+
+	// Set raw response if enabled
+	if provider.sendBackRawResponse {
+		response.ExtraFields.RawResponse = rawResponse
+	}
+
+	return response, nil
+}
+
+func (provider *VertexProvider) handleVertexListModelsRequest(ctx context.Context, key schemas.Key, request *schemas.BifrostListModelsRequest) (*vertex.VertexListModelsResponse, interface{}, time.Duration, *schemas.BifrostError) {
+	providerName := provider.GetProviderKey()
+
+	if key.VertexKeyConfig == nil {
+		return nil, nil, 0, newConfigurationError("vertex key config is not set", providerName)
+	}
+
+	projectID := key.VertexKeyConfig.ProjectID
+	if projectID == "" {
+		return nil, nil, 0, newConfigurationError("project ID is not set", providerName)
+	}
+
+	region := key.VertexKeyConfig.Region
+	if region == "" {
+		return nil, nil, 0, newConfigurationError("region is not set in key config", providerName)
+	}
+
+	// Construct URL for listing models
+	u, err := url.Parse(fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/models", region, projectID, region))
+	if err != nil {
+		return nil, nil, 0, newBifrostOperationError(schemas.ErrProviderRequest, err, providerName)
+	}
+	q := u.Query()
+	// Add limit parameter (default to 1000)
+	pageSize := request.PageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+	q.Set("pageSize", strconv.Itoa(pageSize))
+	if request.PageToken != "" {
+		q.Set("pageToken", request.PageToken)
+	}
+	u.RawQuery = q.Encode()
+
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil, 0, &schemas.BifrostError{
+				IsBifrostError: false,
+				Error: &schemas.ErrorField{
+					Type:    schemas.Ptr(schemas.RequestCancelled),
+					Message: schemas.ErrRequestCancelled,
+					Error:   err,
+				},
+			}
+		}
+		if errors.Is(err, http.ErrHandlerTimeout) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, nil, 0, newBifrostOperationError(schemas.ErrProviderRequestTimedOut, err, providerName)
+		}
+		return nil, nil, 0, &schemas.BifrostError{
+			IsBifrostError: false,
+			Error: &schemas.ErrorField{
+				Message: schemas.ErrProviderRequest,
+				Error:   err,
+			},
+		}
+	}
+
+	// Set any extra headers from network config
+	setExtraHeadersHTTP(req, provider.networkConfig.ExtraHeaders, nil)
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client, err := getAuthClient(key)
+	if err != nil {
+		// Remove client from pool if auth client creation fails
+		removeVertexClient(key.VertexKeyConfig.AuthCredentials)
+		return nil, nil, 0, newBifrostOperationError("error creating auth client", err, providerName)
+	}
+
+	// Make request and measure latency
+	startTime := time.Now()
+	resp, err := client.Do(req)
+	latency := time.Since(startTime)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, nil, latency, &schemas.BifrostError{
+				IsBifrostError: false,
+				Error: &schemas.ErrorField{
+					Type:    schemas.Ptr(schemas.RequestCancelled),
+					Message: schemas.ErrRequestCancelled,
+					Error:   err,
+				},
+			}
+		}
+		if errors.Is(err, http.ErrHandlerTimeout) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, nil, latency, newBifrostOperationError(schemas.ErrProviderRequestTimedOut, err, providerName)
+		}
+		return nil, nil, latency, &schemas.BifrostError{
+			IsBifrostError: false,
+			Error: &schemas.ErrorField{
+				Message: schemas.ErrProviderRequest,
+				Error:   err,
+			},
+		}
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, latency, &schemas.BifrostError{
+			IsBifrostError: true,
+			Error: &schemas.ErrorField{
+				Message: "error reading response",
+				Error:   err,
+			},
+		}
+	}
+
+	// Handle error response
+	if resp.StatusCode != http.StatusOK {
+		provider.logger.Debug(fmt.Sprintf("error from %s provider: %s", providerName, string(body)))
+
+		var errorResp VertexError
+
+		if err := sonic.Unmarshal(body, &errorResp); err != nil {
+			return nil, nil, latency, &schemas.BifrostError{
+				IsBifrostError: true,
+				StatusCode:     &resp.StatusCode,
+				Error: &schemas.ErrorField{
+					Message: schemas.ErrProviderResponseUnmarshal,
+					Error:   err,
+				},
+			}
+		}
+
+		return nil, nil, latency, &schemas.BifrostError{
+			IsBifrostError: false,
+			StatusCode:     &resp.StatusCode,
+			Error: &schemas.ErrorField{
+				Message: errorResp.Error.Message,
+			},
+		}
+	}
+
+	// Parse Vertex's response
+	var vertexResponse vertex.VertexListModelsResponse
+	if err := sonic.Unmarshal(body, &vertexResponse); err != nil {
+		return nil, nil, latency, newBifrostOperationError(schemas.ErrProviderResponseUnmarshal, err, providerName)
+	}
+
+	var rawResponse interface{}
+	if err := sonic.Unmarshal(body, &rawResponse); err != nil {
+		return nil, nil, latency, newBifrostOperationError(schemas.ErrProviderResponseUnmarshal, err, providerName)
+	}
+
+	return &vertexResponse, rawResponse, latency, nil
 }

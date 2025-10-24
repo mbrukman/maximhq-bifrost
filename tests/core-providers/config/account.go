@@ -179,10 +179,9 @@ func (account *ComprehensiveTestAccount) GetKeysForProvider(ctx *context.Context
 					Deployments: map[string]string{
 						"text-embedding-ada-002": "text-embedding-ada-002",
 					},
-					// Use environment variable for API version with fallback to current preview version
-					// Note: This is a preview API version that may change over time. Update as needed.
+					// Use environment variable for API version with fallback to current stable version
 					// Set AZURE_API_VERSION environment variable to override the default.
-					APIVersion: bifrost.Ptr(getEnvWithDefault("AZURE_API_VERSION", "2024-08-01-preview")),
+					APIVersion: bifrost.Ptr(getEnvWithDefault("AZURE_API_VERSION", "2024-10-21")),
 				},
 			},
 		}, nil

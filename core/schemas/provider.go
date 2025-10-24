@@ -87,6 +87,7 @@ type ProxyConfig struct {
 // A nil *AllowedRequests means "all operations allowed."
 // A non-nil value only allows fields set to true; omitted or false fields are disallowed.
 type AllowedRequests struct {
+	ListModels           bool `json:"list_models"`
 	TextCompletion       bool `json:"text_completion"`
 	TextCompletionStream bool `json:"text_completion_stream"`
 	ChatCompletion       bool `json:"chat_completion"`
@@ -105,6 +106,8 @@ func (ar *AllowedRequests) IsOperationAllowed(operation RequestType) bool {
 	}
 
 	switch operation {
+	case ListModelsRequest:
+		return ar.ListModels
 	case TextCompletionRequest:
 		return ar.TextCompletion
 	case TextCompletionStreamRequest:
@@ -216,4 +219,6 @@ type Provider interface {
 	Transcription(ctx context.Context, key Key, request *BifrostTranscriptionRequest) (*BifrostTranscriptionResponse, *BifrostError)
 	// TranscriptionStream performs a transcription stream request
 	TranscriptionStream(ctx context.Context, postHookRunner PostHookRunner, key Key, request *BifrostTranscriptionRequest) (chan *BifrostStream, *BifrostError)
+	// ListModels performs a list models request
+	ListModels(ctx context.Context, key Key, request *BifrostListModelsRequest) (*BifrostListModelsResponse, *BifrostError)
 }

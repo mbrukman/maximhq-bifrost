@@ -18,6 +18,7 @@ const REQUEST_TYPES = [
 	{ key: "speech_stream", label: "Speech Stream" },
 	{ key: "transcription", label: "Transcription" },
 	{ key: "transcription_stream", label: "Transcription Stream" },
+	{ key: "list_models", label: "List Models" },
 ];
 
 export function AllowedRequestsFields({ control, namePrefix = "allowed_requests" }: AllowedRequestsFieldsProps) {

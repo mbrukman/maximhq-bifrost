@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -784,4 +786,115 @@ func (provider *AnthropicProvider) Transcription(ctx context.Context, key schema
 // TranscriptionStream is not supported by the Anthropic provider.
 func (provider *AnthropicProvider) TranscriptionStream(ctx context.Context, postHookRunner schemas.PostHookRunner, key schemas.Key, request *schemas.BifrostTranscriptionRequest) (chan *schemas.BifrostStream, *schemas.BifrostError) {
 	return nil, newUnsupportedOperationError("transcription stream", "anthropic")
+}
+
+// ListModels performs a list models request to Anthropic's API.
+func (provider *AnthropicProvider) ListModels(ctx context.Context, key schemas.Key, request *schemas.BifrostListModelsRequest) (*schemas.BifrostListModelsResponse, *schemas.BifrostError) {
+	if err := checkOperationAllowed(schemas.Anthropic, provider.customProviderConfig, schemas.ListModelsRequest); err != nil {
+		return nil, err
+	}
+
+	anthropicResponse, rawResponse, latency, err := provider.handleAnthropicListModelsRequest(ctx, key, request)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create final response
+	response := anthropicResponse.ToBifrostListModelsResponse(provider.GetProviderKey())
+
+	// Set ExtraFields
+	response.ExtraFields.Provider = provider.GetProviderKey()
+	response.ExtraFields.RequestType = schemas.ListModelsRequest
+	response.ExtraFields.Latency = latency.Milliseconds()
+
+	// Set raw response if enabled
+	if provider.sendBackRawResponse {
+		response.ExtraFields.RawResponse = rawResponse
+	}
+
+	return response, nil
+}
+
+func (provider *AnthropicProvider) handleAnthropicListModelsRequest(ctx context.Context, key schemas.Key, request *schemas.BifrostListModelsRequest) (*anthropic.AnthropicListModelsResponse, interface{}, time.Duration, *schemas.BifrostError) {
+	providerName := provider.GetProviderKey()
+
+	// Create request
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	// Set any extra headers from network config
+	setExtraHeaders(req, provider.networkConfig.ExtraHeaders, nil)
+
+	// Build URL with properly encoded query parameters
+	u, err := url.Parse(provider.networkConfig.BaseURL + "/v1/models")
+	if err != nil {
+		return nil, nil, 0, newBifrostOperationError(schemas.ErrProviderRequest, err, provider.GetProviderKey())
+	}
+	q := u.Query()
+
+	// Add limit parameter (default to 1000)
+	pageSize := request.PageSize
+	if pageSize <= 0 {
+		pageSize = 1000
+	}
+	q.Set("limit", strconv.Itoa(pageSize))
+
+	// Add cursor-based pagination parameters
+	if request.ExtraParams != nil {
+		// before_id for backward pagination
+		if beforeID, ok := request.ExtraParams["before_id"].(string); ok && beforeID != "" {
+			q.Set("before_id", beforeID)
+		}
+		// after_id for forward pagination
+		if afterID, ok := request.ExtraParams["after_id"].(string); ok && afterID != "" {
+			q.Set("after_id", afterID)
+		}
+	}
+	// Use page_token as after_id if not explicitly provided in ExtraParams
+	if request.PageToken != "" {
+		if _, hasAfterID := request.ExtraParams["after_id"]; !hasAfterID {
+			q.Set("after_id", request.PageToken)
+		}
+	}
+
+	u.RawQuery = q.Encode()
+	req.SetRequestURI(u.String())
+	req.Header.SetMethod("GET")
+	req.Header.SetContentType("application/json")
+	req.Header.Set("x-api-key", key.Value)
+	req.Header.Set("anthropic-version", provider.apiVersion)
+
+	// Make request
+	latency, bifrostErr := makeRequestWithContext(ctx, provider.client, req, resp)
+	if bifrostErr != nil {
+		return nil, nil, latency, bifrostErr
+	}
+
+	// Handle error response
+	if resp.StatusCode() != fasthttp.StatusOK {
+		provider.logger.Debug(fmt.Sprintf("error from %s provider: %s", provider.GetProviderKey(), string(resp.Body())))
+
+		var errorResp anthropic.AnthropicError
+
+		bifrostErr := handleProviderAPIError(resp, &errorResp)
+		bifrostErr.Error.Type = &errorResp.Error.Type
+		bifrostErr.Error.Message = errorResp.Error.Message
+
+		return nil, nil, latency, bifrostErr
+	}
+
+	// Parse Anthropic's response
+	var anthropicResponse anthropic.AnthropicListModelsResponse
+	if err := sonic.Unmarshal(resp.Body(), &anthropicResponse); err != nil {
+		return nil, nil, latency, newBifrostOperationError(schemas.ErrProviderResponseUnmarshal, err, providerName)
+	}
+
+	var rawResponse interface{}
+	if err := sonic.Unmarshal(resp.Body(), &rawResponse); err != nil {
+		return nil, nil, latency, newBifrostOperationError(schemas.ErrProviderResponseUnmarshal, err, providerName)
+	}
+
+	return &anthropicResponse, rawResponse, latency, nil
 }

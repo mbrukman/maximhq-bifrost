@@ -90,6 +90,7 @@ const (
 	SpeechStreamRequest         RequestType = "speech_stream"
 	TranscriptionRequest        RequestType = "transcription"
 	TranscriptionStreamRequest  RequestType = "transcription_stream"
+	ListModelsRequest           RequestType = "list_models"
 )
 
 // BifrostContextKey is a type for context keys used in Bifrost.
@@ -118,6 +119,7 @@ type Fallback struct {
 
 // BifrostRequest is the request struct for all bifrost requests.
 // only ONE of the following fields should be set:
+// - ListModelsRequest
 // - TextCompletionRequest
 // - ChatRequest
 // - ResponsesRequest
@@ -128,6 +130,7 @@ type Fallback struct {
 type BifrostRequest struct {
 	RequestType RequestType
 
+	ListModelsRequest     *BifrostListModelsRequest
 	TextCompletionRequest *BifrostTextCompletionRequest
 	ChatRequest           *BifrostChatRequest
 	ResponsesRequest      *BifrostResponsesRequest
@@ -250,8 +253,8 @@ func (r *BifrostResponse) GetExtraFields() *BifrostResponseExtraFields {
 // BifrostResponseExtraFields contains additional fields in a response.
 type BifrostResponseExtraFields struct {
 	RequestType    RequestType        `json:"request_type"`
-	Provider       ModelProvider      `json:"provider"`
-	ModelRequested string             `json:"model_requested"`
+	Provider       ModelProvider      `json:"provider,omitempty"`
+	ModelRequested string             `json:"model_requested,omitempty"`
 	Latency        int64              `json:"latency"`     // in milliseconds (for streaming responses this will be each chunk latency, and the last chunk latency will be the total latency)
 	ChunkIndex     int                `json:"chunk_index"` // used for streaming responses to identify the chunk index, will be 0 for non-streaming responses
 	RawResponse    interface{}        `json:"raw_response,omitempty"`

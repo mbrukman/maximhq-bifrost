@@ -439,7 +439,11 @@ func ToGeminiChatResponse(bifrostResp *schemas.BifrostChatResponse) *GenerateCon
 					for _, toolCall := range choice.ChatNonStreamResponseChoice.Message.ChatAssistantMessage.ToolCalls {
 						argsMap := make(map[string]interface{})
 						if toolCall.Function.Arguments != "" {
-							json.Unmarshal([]byte(toolCall.Function.Arguments), &argsMap)
+							if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &argsMap); err != nil {
+								argsMap = map[string]interface{}{}
+							} else {
+								argsMap = map[string]interface{}{}
+							}
 						}
 						if toolCall.Function.Name != nil {
 							fc := &FunctionCall{
